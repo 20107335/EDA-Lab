@@ -9,10 +9,7 @@ import * as sns from "aws-cdk-lib/aws-sns";
 import * as subs from "aws-cdk-lib/aws-sns-subscriptions";
 import * as iam from "aws-cdk-lib/aws-iam";
 
-
-
 import { Construct } from "constructs";
-// import * as sqs from 'aws-cdk-lib/aws-sqs';
 
 export class EDAAppStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -23,10 +20,15 @@ export class EDAAppStack extends cdk.Stack {
       autoDeleteObjects: true,
       publicReadAccess: false,
     });
+
     // Integration infrastructure
 
-    const queue = new sqs.Queue(this, "img-uploaded-q", {
+    const imageProcessQueue = new sqs.Queue(this, "img-process-q", {
       receiveMessageWaitTime: cdk.Duration.seconds(6),
+    });
+
+    const newImageTopic = new sns.Topic(this, "NewImageTopic", {
+      displayName: "New Image topic",
     });
 
     // Lambda functions
@@ -42,14 +44,19 @@ export class EDAAppStack extends cdk.Stack {
       }
     );
 
-    // S3 --> SQS
+    // S3 --> SNS
     imagesBucket.addEventNotification(
       s3.EventType.OBJECT_CREATED,
-      new s3n.SqsDestination(queue)
+      new s3n.SnsDestination(newImageTopic)
+    );
+
+    // SNS --> SQS
+    newImageTopic.addSubscription(
+      new subs.SqsSubscription(imageProcessQueue)
     );
 
     // SQS --> Lambda
-    const newImageEventSource = new events.SqsEventSource(queue, {
+    const newImageEventSource = new events.SqsEventSource(imageProcessQueue, {
       batchSize: 5,
       maxBatchingWindow: cdk.Duration.seconds(5),
     });
@@ -57,9 +64,11 @@ export class EDAAppStack extends cdk.Stack {
     processImageFn.addEventSource(newImageEventSource);
 
     // Permissions
+
     imagesBucket.grantRead(processImageFn);
+
     // Output
-    
+
     new cdk.CfnOutput(this, "bucketName", {
       value: imagesBucket.bucketName,
     });
